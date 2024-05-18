@@ -1,0 +1,853 @@
+Customer Survival Analysis
+TheoryCustomer Survival Analysis
+Theory
+If time to event has the probability density function 
+ and cumulative distribution function 
+, then the probability of surviving at least to time 
+ is: 
+.
+
+Cumulative hazard at time t is defined as 
+ and instantaneous hazard at time 
+ is 
+ 
+. The instantateous hazard can also be written as 
+ 
+
+The likelihood function for survival analysis is described as:
+
+ 
+where 
+ is the censoring variable that equals to 1 if the event is observed for individual 
+ and 0 if the event is not observed (censored) for individual 
+, 
+ is the hazard for individual 
+ at time 
+, 
+ is the cumulative hazard for individual 
+ at time 
+, and 
+ is the survival probability for individual 
+ at time 
+. Note that when 
+, the contribution of the 
+'th individual to the likelihood function is just its survival probability until time 
+: S(t). If the individual has the event, the contribution to the likelihood function is given by the density function 
+.
+
+The log of likelihood is:
+
+ 
+where 
+ is the natural logarithm.
+
+Importing Libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import norm
+import statsmodels.api as st
+from sklearn.preprocessing import LabelEncoder
+labelencoder = LabelEncoder()
+
+#Lifelines is a survival analysis package
+from lifelines import KaplanMeierFitter
+from lifelines.statistics import multivariate_logrank_test   
+from lifelines.statistics import logrank_test
+from lifelines import CoxPHFitter
+Data Preparation
+df = pd.read_csv("C:/Data/Telco-Customer-Churn.csv")
+df.head()
+customerID	gender	SeniorCitizen	Partner	Dependents	tenure	PhoneService	MultipleLines	InternetService	OnlineSecurity	...	DeviceProtection	TechSupport	StreamingTV	StreamingMovies	Contract	PaperlessBilling	PaymentMethod	MonthlyCharges	TotalCharges	Churn
+0	7590-VHVEG	Female	0	Yes	No	1	No	No phone service	DSL	No	...	No	No	No	No	Month-to-month	Yes	Electronic check	29.85	29.85	No
+1	5575-GNVDE	Male	0	No	No	34	Yes	No	DSL	Yes	...	Yes	No	No	No	One year	No	Mailed check	56.95	1889.5	No
+2	3668-QPYBK	Male	0	No	No	2	Yes	No	DSL	Yes	...	No	No	No	No	Month-to-month	Yes	Mailed check	53.85	108.15	Yes
+3	7795-CFOCW	Male	0	No	No	45	No	No phone service	DSL	Yes	...	Yes	Yes	No	No	One year	No	Bank transfer (automatic)	42.30	1840.75	No
+4	9237-HQITU	Female	0	No	No	2	Yes	No	Fiber optic	No	...	No	No	No	No	Month-to-month	Yes	Electronic check	70.70	151.65	Yes
+5 rows × 21 columns
+
+df.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 7043 entries, 0 to 7042
+Data columns (total 21 columns):
+customerID          7043 non-null object
+gender              7043 non-null object
+SeniorCitizen       7043 non-null int64
+Partner             7043 non-null object
+Dependents          7043 non-null object
+tenure              7043 non-null int64
+PhoneService        7043 non-null object
+MultipleLines       7043 non-null object
+InternetService     7043 non-null object
+OnlineSecurity      7043 non-null object
+OnlineBackup        7043 non-null object
+DeviceProtection    7043 non-null object
+TechSupport         7043 non-null object
+StreamingTV         7043 non-null object
+StreamingMovies     7043 non-null object
+Contract            7043 non-null object
+PaperlessBilling    7043 non-null object
+PaymentMethod       7043 non-null object
+MonthlyCharges      7043 non-null float64
+TotalCharges        7043 non-null object
+Churn               7043 non-null object
+dtypes: float64(1), int64(2), object(18)
+memory usage: 1.1+ MB
+Here, Churn is an event which indicates whether customer exited or not. Tenure shows how long customer remained in our service. Both of these variables are very important for customer survival analysis.
+
+df.Churn = labelencoder.fit_transform(df.Churn)
+df.Churn.value_counts()
+0    5174
+1    1869
+Name: Churn, dtype: int64
+eventvar = df['Churn']
+timevar = df['tenure']
+For the analysis, I will need to create dummy variables for all categorical variables.
+
+categorical = ['gender', 'SeniorCitizen', 'Partner', 'Dependents', 'PhoneService', 'MultipleLines',
+       'InternetService', 'OnlineSecurity', 'OnlineBackup', 'DeviceProtection',
+       'TechSupport', 'StreamingTV', 'StreamingMovies', 'Contract',
+       'PaperlessBilling', 'PaymentMethod']
+
+survivaldata = pd.get_dummies(df, columns = categorical, drop_first= True)
+survivaldata.head()
+customerID	tenure	MonthlyCharges	TotalCharges	Churn	gender_Male	SeniorCitizen_1	Partner_Yes	Dependents_Yes	PhoneService_Yes	...	StreamingTV_No internet service	StreamingTV_Yes	StreamingMovies_No internet service	StreamingMovies_Yes	Contract_One year	Contract_Two year	PaperlessBilling_Yes	PaymentMethod_Credit card (automatic)	PaymentMethod_Electronic check	PaymentMethod_Mailed check
+0	7590-VHVEG	1	29.85	29.85	0	0	0	1	0	0	...	0	0	0	0	0	0	1	0	1	0
+1	5575-GNVDE	34	56.95	1889.5	0	1	0	0	0	1	...	0	0	0	0	1	0	0	0	0	1
+2	3668-QPYBK	2	53.85	108.15	1	1	0	0	0	1	...	0	0	0	0	0	0	1	0	0	1
+3	7795-CFOCW	45	42.30	1840.75	0	1	0	0	0	0	...	0	0	0	0	1	0	0	0	0	0
+4	9237-HQITU	2	70.70	151.65	1	0	0	0	0	1	...	0	0	0	0	0	0	1	0	1	0
+5 rows × 32 columns
+
+We need to drop variables such as customerID, tenure, Churn as they are not needed in survival data. Also, we need to add constant for survival analysis.
+
+survivaldata.drop(['customerID', 'tenure', 'Churn'], axis = 1, inplace= True)
+survivaldata = st.add_constant(survivaldata, prepend=False)
+survivaldata.head()
+MonthlyCharges	TotalCharges	gender_Male	SeniorCitizen_1	Partner_Yes	Dependents_Yes	PhoneService_Yes	MultipleLines_No phone service	MultipleLines_Yes	InternetService_Fiber optic	...	StreamingTV_Yes	StreamingMovies_No internet service	StreamingMovies_Yes	Contract_One year	Contract_Two year	PaperlessBilling_Yes	PaymentMethod_Credit card (automatic)	PaymentMethod_Electronic check	PaymentMethod_Mailed check	const
+0	29.85	29.85	0	0	1	0	0	1	0	0	...	0	0	0	0	0	1	0	1	0	1.0
+1	56.95	1889.5	1	0	0	0	1	0	0	0	...	0	0	0	1	0	0	0	0	1	1.0
+2	53.85	108.15	1	0	0	0	1	0	0	0	...	0	0	0	0	0	1	0	0	1	1.0
+3	42.30	1840.75	1	0	0	0	0	1	0	0	...	0	0	0	1	0	0	0	0	0	1.0
+4	70.70	151.65	0	0	0	0	1	0	0	1	...	0	0	0	0	0	1	0	1	0	1.0
+5 rows × 30 columns
+
+Survival Analysis
+Kaplan-Meier Curve
+The Kaplan-Meier method calculates the probability of survival at time 𝑡 as:
+
+ 
+ 
+
+where,
+
+𝑆(𝑡) is the probability of survival until time 𝑡,
+ is the number of units that experienced the event at time 𝑡,
+ is the number of units at risk of experiencing the event at time 𝑡.
+ decreases with time, as units experience the event or are censored. 
+ 
+ is the probability of experiencing the event at time 𝑖 and 
+ 
+ is the probability of surviving at time 𝑖.
+
+Note that this method does not use any parameters, it only depends on the data on time and censoring.
+
+#Create a KaplanMeier object, imported from lifelines
+kmf = KaplanMeierFitter()
+#Calculate the K-M curve for all groups
+kmf.fit(timevar,event_observed = eventvar,label = "All Customers")
+#Plot the curve and assign labels
+kmf.plot()
+plt.ylabel('Probability of Customer Survival')
+plt.xlabel('Tenure')
+plt.title('Kaplan-Meier Curve');
+
+As we can see, there is a sudden drop in the starting which says that after one tenure only customers starts churning rapidly and after that churning rate decreases. To deal with that we can consider giving more discounts on long-term plans and make more customers to subscribe for long term plans.
+
+Log-Rank Test
+We can use non-parametric method log-rank test to compare survival curves between different groups. The log-rank test assumes that the hazards of the groups are proportional. Under the null hypothesis, the probability of event across the groups is the same for all time points.
+
+To test the null hypothesis, the log-rank test calculates the difference between the observed number of events and the number of events expected in each group proportional to the size of the groups at each time point an event is observed. The log-rank test statistic for group 
+ 
+ follows a 
+ distribution and is calculated as:
+
+ 
+
+ is calculated as:
+
+ 
+
+and 
+ is:
+
+ 
+ 
+ 
+
+ is the observed number of events in group 
+ at time 
+ and 
+ is the expected number of events in group 
+ at time 
+, which is calculated as 
+ 
+. Note that 
+ 
+ is the proportion of units in group 
+ at risk of event at time 
+ (
+) to the number of units in all groups at risk of event at time 
+ (
+) and 
+ is the observed number of events in all groups at time 
+.
+
+When comparing multiple groups, we first calculate the pairwise log-rank test scores between each of the 
+ groups, and write them as a vector of log-rank statistics, 
+ which has 
+ elements. We can leave any of one of the statistics out, because the 
+ covariances are linearly dependent on each other (the sum of log-rank statistics is 0, 
+.
+
+The test statistic for the hypothesis that there is no difference in survival times of 
+ groups is calculated as:
+
+
+which has a 
+ distribution, where 
+ is the inverse of the 
+ by 
+ variance-covariance matrix of 
+, which has variance of 
+ on its diagonal elements and 
+ on its off-diagonal elements.
+
+The variance of observed number of events in group 
+ is calculated as 
+ as demonstrated above. The covariance between the observed number of events in group 
+ and 
+ is calculated as:
+
+ 
+ 
+
+Note that rejecting the null hypothesis means that the survival times of groups do not come from the same distribution, it does not specify which group's survival time is different. The following plots and test statistics compare the groups in the dataset in terms of the different explanatory variables. Astatistically significant log-rank test statistic indicates that we can reject the null hypothesis that time to survival in all groups come from the same distribution.
+
+Gender
+male = (survivaldata['gender_Male'] == 1)
+female = (survivaldata['gender_Male'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[male],event_observed = eventvar[male],label = "Male")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[female],event_observed = eventvar[female],label = "Female")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Gender')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[male], timevar[female], event_observed_A=eventvar[male], event_observed_B=eventvar[female])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic    p  -log2(p)
+           0.53 0.47      1.09
+
+Senior Citizen
+SeniorCitizen = (survivaldata['SeniorCitizen_1'] == 1)
+no_SeniorCitizen = (survivaldata['SeniorCitizen_1'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[SeniorCitizen],event_observed = eventvar[SeniorCitizen],label = "Senior Citizen")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[no_SeniorCitizen],event_observed = eventvar[no_SeniorCitizen],label = "Not a Senior Citizen")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Senior Citizen')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[SeniorCitizen], timevar[no_SeniorCitizen], event_observed_A=eventvar[SeniorCitizen], event_observed_B=eventvar[no_SeniorCitizen])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic      p  -log2(p)
+         109.49 <0.005     82.71
+
+Partner
+partner = (survivaldata['Partner_Yes'] == 1)
+no_partner = (survivaldata['Partner_Yes'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[partner],event_observed = eventvar[partner],label = "Has partner")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[no_partner],event_observed = eventvar[no_partner],label = "Does not have a partner")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Partner')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[partner], timevar[no_partner], event_observed_A=eventvar[partner], event_observed_B=eventvar[no_partner])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic      p  -log2(p)
+         423.54 <0.005    310.21
+
+Dependents
+Dependents = (survivaldata['Dependents_Yes'] == 1)
+no_Dependents = (survivaldata['Dependents_Yes'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[Dependents],event_observed = eventvar[Dependents],label = "Has dependents")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[no_Dependents],event_observed = eventvar[no_Dependents],label = "Does not have dependents")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Dependents')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[Dependents], timevar[no_Dependents], event_observed_A=eventvar[Dependents], event_observed_B=eventvar[no_Dependents])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic      p  -log2(p)
+         232.70 <0.005    172.12
+
+PhoneService
+PhoneService = (survivaldata['PhoneService_Yes'] == 1)
+no_PhoneService = (survivaldata['PhoneService_Yes'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[PhoneService],event_observed = eventvar[PhoneService],label = "Has a phone service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[no_PhoneService],event_observed = eventvar[no_PhoneService],label = "Does not have a phone service")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Phone Service')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[PhoneService], timevar[no_PhoneService], event_observed_A=eventvar[PhoneService], event_observed_B=eventvar[no_PhoneService])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic    p  -log2(p)
+           0.43 0.51      0.97
+
+MultipleLines
+no_phone = (survivaldata['MultipleLines_No phone service'] == 1)
+multiLines = (survivaldata['MultipleLines_Yes'] == 1)
+no_multiLines = ((survivaldata['MultipleLines_Yes'] == 0) & (survivaldata['MultipleLines_No phone service'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_phone],event_observed = eventvar[no_phone],label = "No Phone Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[multiLines],event_observed = eventvar[multiLines],label = "Multiple Lines")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_multiLines],event_observed = eventvar[no_multiLines],label = "Single Line")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Mutliple Lines')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['MultipleLines'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+          30.97 <0.005     22.34
+
+Internet Service
+Fiber_optic = (survivaldata['InternetService_Fiber optic'] == 1)
+No_Service = (survivaldata['InternetService_No'] == 1)
+DSL = ((survivaldata['InternetService_Fiber optic'] == 0) & (survivaldata['InternetService_No'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[Fiber_optic],event_observed = eventvar[Fiber_optic],label = "Fiber optic")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[No_Service],event_observed = eventvar[No_Service],label = "No Service")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[DSL],event_observed = eventvar[DSL],label = "DSL")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Internet Service')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['InternetService'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         520.12 <0.005    375.19
+
+Online Security
+no_internetService = (survivaldata['OnlineSecurity_No internet service'] == 1)
+onlineSecurity = (survivaldata['OnlineSecurity_Yes'] == 1)
+no_onlineSecurity = ((survivaldata['OnlineSecurity_No internet service'] == 0) & (survivaldata['OnlineSecurity_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[onlineSecurity],event_observed = eventvar[onlineSecurity],label = "Online Security")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_onlineSecurity],event_observed = eventvar[no_onlineSecurity],label = "No online Security")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Online Security')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['OnlineSecurity'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+        1013.86 <0.005    731.35
+
+Online Backup
+no_internetService = (survivaldata['OnlineBackup_No internet service'] == 1)
+onlineBackup = (survivaldata['OnlineBackup_Yes'] == 1)
+no_onlineBackup = ((survivaldata['OnlineBackup_No internet service'] == 0) & (survivaldata['OnlineBackup_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[onlineBackup],event_observed = eventvar[onlineBackup],label = "Online Backup")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_onlineBackup],event_observed = eventvar[no_onlineBackup],label = "No online Backup")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Online Backup')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['OnlineBackup'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         821.34 <0.005    592.47
+
+Device Protection
+no_internetService = (survivaldata['DeviceProtection_No internet service'] == 1)
+DeviceProtection = (survivaldata['DeviceProtection_Yes'] == 1)
+no_DeviceProtection = ((survivaldata['DeviceProtection_No internet service'] == 0) & (survivaldata['DeviceProtection_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[DeviceProtection],event_observed = eventvar[DeviceProtection],label = "Device Protection")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_DeviceProtection],event_observed = eventvar[no_DeviceProtection],label = "No Device Protection")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Device Protection')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['DeviceProtection'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         763.51 <0.005    550.75
+
+Tech Support
+no_internetService = (survivaldata['TechSupport_No internet service'] == 1)
+TechSupport = (survivaldata['TechSupport_Yes'] == 1)
+no_TechSupport = ((survivaldata['TechSupport_No internet service'] == 0) & (survivaldata['TechSupport_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[TechSupport],event_observed = eventvar[TechSupport],label = "Tech Support")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_TechSupport],event_observed = eventvar[no_TechSupport],label = "No Tech Support")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Tech Support')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['TechSupport'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         989.56 <0.005    713.82
+
+Streaming TV
+no_internetService = (survivaldata['StreamingTV_No internet service'] == 1)
+StreamingTV = (survivaldata['StreamingTV_Yes'] == 1)
+no_StreamingTV = ((survivaldata['StreamingTV_No internet service'] == 0) & (survivaldata['StreamingTV_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[StreamingTV],event_observed = eventvar[StreamingTV],label = "Streaming TV")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_StreamingTV],event_observed = eventvar[no_StreamingTV],label = "No Streaming TV")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Streaming TV')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['StreamingTV'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         368.31 <0.005    265.68
+
+Streaming Movies
+no_internetService = (survivaldata['StreamingMovies_No internet service'] == 1)
+StreamingMovies = (survivaldata['StreamingMovies_Yes'] == 1)
+no_StreamingMovies = ((survivaldata['StreamingMovies_No internet service'] == 0) & (survivaldata['StreamingMovies_Yes'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[no_internetService],event_observed = eventvar[no_internetService],label = "No Internet Service")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[StreamingMovies],event_observed = eventvar[StreamingMovies],label = "Streaming Movies")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[no_StreamingMovies],event_observed = eventvar[no_StreamingMovies],label = "No Streaming Movies")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Streaming Movies')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['StreamingMovies'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         378.43 <0.005    272.98
+
+Contract
+Contract_One_year = (survivaldata['Contract_One year'] == 1)
+Contract_Two_year = (survivaldata['Contract_Two year'] == 1)
+Contract_month_to_month = ((survivaldata['Contract_One year'] == 0) & (survivaldata['Contract_Two year'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[Contract_One_year],event_observed = eventvar[Contract_One_year],label = "One year Contract")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[Contract_Two_year],event_observed = eventvar[Contract_Two_year],label = "Two year Contract")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[Contract_month_to_month],event_observed = eventvar[Contract_month_to_month],label = "Month to month Contract")
+plot3 = kmf.plot(ax = plot2)
+                 
+plt.title('Survival of customers: Contract')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['Contract'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 2
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+        2352.87 <0.005       inf
+
+Payment Method
+automatic_Credit_Card = (survivaldata['PaymentMethod_Credit card (automatic)'] == 1)
+electronic_check = (survivaldata['PaymentMethod_Electronic check'] == 1)
+mailed_check = (survivaldata['PaymentMethod_Mailed check'] == 1)
+automatic_Bank_Transfer = ((survivaldata['PaymentMethod_Credit card (automatic)'] == 0) & (survivaldata['PaymentMethod_Electronic check'] == 0) & (survivaldata['PaymentMethod_Mailed check'] == 0))
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[automatic_Credit_Card],event_observed = eventvar[automatic_Credit_Card],label = "Automatic Credit card Payment")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[electronic_check],event_observed = eventvar[electronic_check],label = "Electronic Check")
+plot2 = kmf.plot(ax = plot1)
+
+kmf.fit(timevar[mailed_check],event_observed = eventvar[mailed_check],label = "Mailed_check")
+plot3 = kmf.plot(ax = plot2)
+
+kmf.fit(timevar[automatic_Bank_Transfer],event_observed = eventvar[automatic_Bank_Transfer],label = "Automatic Bank Transfer")
+plot4 = kmf.plot(ax = plot3)
+                 
+plt.title('Survival of customers: PaymentMethod')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+twoplusgroups_logrank = multivariate_logrank_test(df['tenure'], df['PaymentMethod'], df['Churn'], alpha = 0.95)
+twoplusgroups_logrank.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 3
+             alpha = 0.95
+
+---
+ test_statistic      p  -log2(p)
+         865.24 <0.005    619.58
+
+Paperless Billing
+PaperlessBilling = (survivaldata['PaperlessBilling_Yes'] == 1)
+no_PaperlessBilling = (survivaldata['PaperlessBilling_Yes'] == 0)
+
+plt.figure()
+ax = plt.subplot(1,1,1)
+
+kmf.fit(timevar[PaperlessBilling],event_observed = eventvar[PaperlessBilling],label = "Paperless Billing")
+plot1 = kmf.plot(ax = ax)
+
+kmf.fit(timevar[no_PhoneService],event_observed = eventvar[no_PhoneService],label = "No Paperless Billing")
+plot2 = kmf.plot(ax = plot1)
+                 
+plt.title('Survival of customers: Paperless Billing')
+plt.xlabel('Tenure')
+plt.ylabel('Survival Probability')
+plt.yticks(np.linspace(0,1,11))
+groups = logrank_test(timevar[PaperlessBilling], timevar[no_PaperlessBilling], event_observed_A=eventvar[PaperlessBilling], event_observed_B=eventvar[no_PaperlessBilling])
+groups.print_summary()
+<lifelines.StatisticalResult>
+               t_0 = -1
+ null_distribution = chi squared
+degrees_of_freedom = 1
+
+---
+ test_statistic      p  -log2(p)
+         189.51 <0.005    140.82
+
+Survival Regression
+def datapreparation(filepath):
+    
+    df = pd.read_csv(filepath)
+    df.drop(["customerID"], inplace = True, axis = 1)
+    
+    df.TotalCharges = df.TotalCharges.replace(" ",np.nan)
+    df.TotalCharges.fillna(0, inplace = True)
+    df.TotalCharges = df.TotalCharges.astype(float)
+    
+    cols1 = ['Partner', 'Dependents', 'PaperlessBilling', 'Churn', 'PhoneService']
+    for col in cols1:
+        df[col] = df[col].apply(lambda x: 0 if x == "No" else 1)
+   
+    df.gender = df.gender.apply(lambda x: 0 if x == "Male" else 1)
+    df.MultipleLines = df.MultipleLines.map({'No phone service': 0, 'No': 0, 'Yes': 1})
+    
+    cols2 = ['OnlineSecurity', 'OnlineBackup', 'DeviceProtection', 'TechSupport', 'StreamingTV', 'StreamingMovies']
+    for col in cols2:
+        df[col] = df[col].map({'No internet service': 0, 'No': 0, 'Yes': 1})
+    
+    df = pd.get_dummies(df, columns=['InternetService', 'Contract', 'PaymentMethod'], drop_first=True)
+    
+    return df
+regression_df = datapreparation("C:/Data/Telco-Customer-Churn.csv")
+regression_df.head()
+gender	SeniorCitizen	Partner	Dependents	tenure	PhoneService	MultipleLines	OnlineSecurity	OnlineBackup	DeviceProtection	...	MonthlyCharges	TotalCharges	Churn	InternetService_Fiber optic	InternetService_No	Contract_One year	Contract_Two year	PaymentMethod_Credit card (automatic)	PaymentMethod_Electronic check	PaymentMethod_Mailed check
+0	1	0	1	0	1	0	0	0	1	0	...	29.85	29.85	0	0	0	0	0	0	1	0
+1	0	0	0	0	34	1	0	1	0	1	...	56.95	1889.50	0	0	0	1	0	0	0	1
+2	0	0	0	0	2	1	0	1	1	0	...	53.85	108.15	1	0	0	0	0	0	0	1
+3	0	0	0	0	45	0	0	1	0	1	...	42.30	1840.75	0	0	0	1	0	0	0	0
+4	1	0	0	0	2	1	0	0	0	0	...	70.70	151.65	1	1	0	0	0	0	1	0
+5 rows × 24 columns
+
+Survival Regression Ananlysis using Cox Proportional Hazard model
+cph = CoxPHFitter()
+cph.fit(regression_df, duration_col='tenure', event_col='Churn')
+
+cph.print_summary()
+<lifelines.CoxPHFitter: fitted with 7043 observations, 5174 censored>
+      duration col = 'tenure'
+         event col = 'Churn'
+number of subjects = 7043
+  number of events = 1869
+partial log-likelihood = -12659.69
+  time fit was run = 2020-09-22 14:53:48 UTC
+
+---
+                                       coef exp(coef)  se(coef)      z      p  -log2(p)  lower 0.95  upper 0.95
+gender                                 0.04      1.04      0.05   0.85   0.40      1.33       -0.05        0.13
+SeniorCitizen                          0.03      1.04      0.06   0.61   0.54      0.88       -0.08        0.15
+Partner                               -0.18      0.84      0.06  -3.23 <0.005      9.67       -0.29       -0.07
+Dependents                            -0.09      0.91      0.07  -1.31   0.19      2.40       -0.23        0.05
+PhoneService                           0.83      2.29      0.47   1.75   0.08      3.63       -0.10        1.76
+MultipleLines                          0.09      1.09      0.13   0.69   0.49      1.03       -0.16        0.33
+OnlineSecurity                        -0.21      0.81      0.13  -1.60   0.11      3.20       -0.47        0.05
+OnlineBackup                          -0.06      0.95      0.13  -0.44   0.66      0.60       -0.31        0.19
+DeviceProtection                       0.09      1.09      0.13   0.69   0.49      1.03       -0.16        0.34
+TechSupport                           -0.08      0.92      0.13  -0.64   0.52      0.93       -0.34        0.17
+StreamingTV                            0.28      1.32      0.24   1.19   0.23      2.10       -0.18        0.74
+StreamingMovies                        0.29      1.33      0.24   1.22   0.22      2.16       -0.18        0.75
+PaperlessBilling                       0.15      1.16      0.06   2.65   0.01      6.95        0.04        0.26
+MonthlyCharges                         0.01      1.01      0.02   0.57   0.57      0.82       -0.03        0.06
+TotalCharges                          -0.00      1.00      0.00 -39.16 <0.005       inf       -0.00       -0.00
+InternetService_Fiber optic            1.02      2.77      0.58   1.76   0.08      3.67       -0.12        2.15
+InternetService_No                    -2.34      0.10      0.60  -3.93 <0.005     13.51       -3.51       -1.17
+Contract_One year                     -1.27      0.28      0.10 -12.55 <0.005    117.58       -1.46       -1.07
+Contract_Two year                     -3.70      0.02      0.20 -18.32 <0.005    246.60       -4.10       -3.31
+PaymentMethod_Credit card (automatic) -0.01      0.99      0.09  -0.13   0.90      0.16       -0.19        0.17
+PaymentMethod_Electronic check         0.39      1.47      0.07   5.31 <0.005     23.13        0.24        0.53
+PaymentMethod_Mailed check             0.51      1.67      0.09   5.87 <0.005     27.74        0.34        0.68
+---
+Concordance = 0.93
+Log-likelihood ratio test = 5986.69 on 22 df, -log2(p)=inf
+cph.score_
+0.9285636735265471
+fig, ax = plt.subplots(figsize = (10,7))
+cph.plot(ax = ax);
+
+test_id = regression_df.sample(1)
+fig, ax = plt.subplots()
+cph.predict_cumulative_hazard(test_id).plot(ax = ax, color = 'red')
+plt.axvline(x=test_id.tenure.values[0], color = 'blue', linestyle='--')
+plt.legend(labels=['Hazard','Current Position'])
+ax.set_xlabel('Tenure', size = 10)
+ax.set_ylabel('Cumulative Hazard', size = 10)
+ax.set_title('Cumulative Hazard Over Time');
+
+fig, ax = plt.subplots()
+cph.predict_survival_function(test_id).plot(ax = ax, color = 'red')
+plt.axvline(x=test_id.tenure.values[0], color = 'blue', linestyle='--')
+plt.legend(labels=['Survival Function','Current Position'])
+ax.set_xlabel('Tenure', size = 10)
+ax.set_ylabel('Survival Probability', size = 10)
+ax.set_title('Survival Probability Over Time');
+
+Saving the model
+
+import pickle
+pickle.dump(cph, open('survivemodel.pkl','wb'))
+Customer Lifetime Value
+To calculate customer lifetime value, I would multiply the Monthly charges the customer is paying to Telcom and the expected life time of the customer.
+
+I utilize the survival function of a customer to calculate its expected life time. I would like to be little bit conservative and consider the customer is churned when the survival probability of him is 10%.
+
+def LTV(info):
+    life = cph.predict_survival_function(info).reset_index()
+    life.columns = ['Tenure', 'Probability']
+    max_life = life.Tenure[life.Probability > 0.1].max()
+    
+    LTV = max_life * info['MonthlyCharges'].values[0]
+    return LTV
+print('LTV of a testid is:', LTV(test_id), 'dollars.')
+LTV of a testid is: 922.25 dollars.
